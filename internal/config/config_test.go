@@ -6,6 +6,10 @@ import (
 )
 
 func TestLoad_Defaults(t *testing.T) {
+	// Credentials are required now; set them for the defaults test.
+	t.Setenv("S3_ACCESS_KEY", "testkey")
+	t.Setenv("S3_SECRET_KEY", "testsecret")
+
 	cfg, err := Load("")
 	if err != nil {
 		t.Fatalf("Load() returned error: %v", err)
@@ -15,11 +19,11 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.S3.Endpoint != "localhost:9000" {
 		t.Errorf("S3.Endpoint = %q, want %q", cfg.S3.Endpoint, "localhost:9000")
 	}
-	if cfg.S3.AccessKey != "minioadmin" {
-		t.Errorf("S3.AccessKey = %q, want %q", cfg.S3.AccessKey, "minioadmin")
+	if cfg.S3.AccessKey != "testkey" {
+		t.Errorf("S3.AccessKey = %q, want %q", cfg.S3.AccessKey, "testkey")
 	}
-	if cfg.S3.SecretKey != "minioadmin" {
-		t.Errorf("S3.SecretKey = %q, want %q", cfg.S3.SecretKey, "minioadmin")
+	if cfg.S3.SecretKey != "testsecret" {
+		t.Errorf("S3.SecretKey = %q, want %q", cfg.S3.SecretKey, "testsecret")
 	}
 	if cfg.S3.Bucket != "data" {
 		t.Errorf("S3.Bucket = %q, want %q", cfg.S3.Bucket, "data")
@@ -27,8 +31,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.S3.Region != "us-east-1" {
 		t.Errorf("S3.Region = %q, want %q", cfg.S3.Region, "us-east-1")
 	}
-	if cfg.S3.UseSSL != false {
-		t.Errorf("S3.UseSSL = %v, want false", cfg.S3.UseSSL)
+	if cfg.S3.UseSSL != true {
+		t.Errorf("S3.UseSSL = %v, want true", cfg.S3.UseSSL)
 	}
 	if cfg.S3.PathStyle != true {
 		t.Errorf("S3.PathStyle = %v, want true", cfg.S3.PathStyle)
@@ -37,6 +41,9 @@ func TestLoad_Defaults(t *testing.T) {
 	// NFS defaults
 	if cfg.NFS.Port != 2049 {
 		t.Errorf("NFS.Port = %d, want 2049", cfg.NFS.Port)
+	}
+	if cfg.NFS.BindAddr != "0.0.0.0" {
+		t.Errorf("NFS.BindAddr = %q, want %q", cfg.NFS.BindAddr, "0.0.0.0")
 	}
 
 	// Health defaults
@@ -58,6 +65,17 @@ func TestLoad_Defaults(t *testing.T) {
 	// Log defaults
 	if cfg.Log.Level != "info" {
 		t.Errorf("Log.Level = %q, want %q", cfg.Log.Level, "info")
+	}
+}
+
+func TestLoad_MissingCredentials(t *testing.T) {
+	_, err := Load("")
+	if err == nil {
+		t.Fatal("Load() should return error when S3 credentials are not set")
+	}
+	want := "S3_ACCESS_KEY and S3_SECRET_KEY environment variables are required"
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
 	}
 }
 
@@ -171,6 +189,9 @@ func TestLoad_EnvOverrides(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Ensure credentials are always set so Load doesn't fail.
+			t.Setenv("S3_ACCESS_KEY", "testkey")
+			t.Setenv("S3_SECRET_KEY", "testsecret")
 			t.Setenv(tt.envKey, tt.envVal)
 			cfg, err := Load("")
 			if err != nil {
@@ -184,6 +205,8 @@ func TestLoad_EnvOverrides(t *testing.T) {
 }
 
 func TestLoad_InvalidNFSPort(t *testing.T) {
+	t.Setenv("S3_ACCESS_KEY", "testkey")
+	t.Setenv("S3_SECRET_KEY", "testsecret")
 	t.Setenv("NFS_PORT", "notanumber")
 	_, err := Load("")
 	if err == nil {
@@ -195,6 +218,8 @@ func TestLoad_InvalidNFSPort(t *testing.T) {
 }
 
 func TestLoad_InvalidHealthPort(t *testing.T) {
+	t.Setenv("S3_ACCESS_KEY", "testkey")
+	t.Setenv("S3_SECRET_KEY", "testsecret")
 	t.Setenv("HEALTH_PORT", "notanumber")
 	_, err := Load("")
 	if err == nil {

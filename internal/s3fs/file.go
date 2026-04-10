@@ -1,3 +1,6 @@
+// Copyright 2024 s3-filesystem-gateway contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package s3fs
 
 import (
@@ -6,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -219,7 +223,7 @@ type s3WritableFile struct {
 var _ nfs.File = (*s3WritableFile)(nil)
 
 func newWritableFile(fsys *S3FS, path, s3Key string, info *fileInfo) (*s3WritableFile, error) {
-	tmp, err := os.CreateTemp("", "s3fs-write-*")
+	tmp, err := os.CreateTemp(os.TempDir(), "s3gw-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp file: %w", err)
 	}
@@ -347,14 +351,30 @@ var emptyReader = io.NopCloser(bytes.NewReader(nil))
 // s3KeyFromPath converts a POSIX path to an S3 key.
 // Root "/" maps to "", "/foo/bar" maps to "foo/bar".
 func s3KeyFromPath(path string) string {
-	path = strings.TrimPrefix(path, "/")
-	return path
+	cleaned := filepath.Clean(path)
+	cleaned = strings.TrimPrefix(cleaned, "/")
+	if cleaned == "." {
+		return ""
+	}
+	// Reject path traversal attempts
+	for _, part := range strings.Split(cleaned, "/") {
+		if part == ".." {
+			return ""
+		}
+	}
+	return cleaned
 }
 
 // s3DirKey ensures an S3 key ends with "/" for directory operations.
 func s3DirKey(key string) string {
 	if key == "" {
 		return ""
+	}
+	// Reject path traversal attempts
+	for _, part := range strings.Split(key, "/") {
+		if part == ".." {
+			return ""
+		}
 	}
 	if !strings.HasSuffix(key, "/") {
 		return key + "/"

@@ -1,3 +1,6 @@
+// Copyright 2024 s3-filesystem-gateway contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package cache
 
 import (
@@ -100,7 +103,7 @@ func NewDataCache(config DataCacheConfig) (*DataCache, error) {
 		config.EvictionInterval = 30 * time.Second
 	}
 
-	if err := os.MkdirAll(config.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(config.Dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create cache dir %q: %w", config.Dir, err)
 	}
 
@@ -165,7 +168,7 @@ func (dc *DataCache) Put(s3Key, etag string, reader io.Reader, size int64) error
 
 	// Ensure shard directory exists.
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create shard dir: %w", err)
 	}
 

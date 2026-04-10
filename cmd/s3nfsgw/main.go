@@ -1,3 +1,6 @@
+// Copyright 2024 s3-filesystem-gateway contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package main
 
 import (
@@ -96,7 +99,7 @@ func main() {
 	slog.Info("health/metrics server started", "addr", healthAddr)
 
 	// 3. Initialize bbolt metadata store
-	if err := os.MkdirAll(*dataDir, 0755); err != nil {
+	if err := os.MkdirAll(*dataDir, 0700); err != nil {
 		slog.Error("failed to create data directory", "error", err)
 		os.Exit(1)
 	}
@@ -111,9 +114,10 @@ func main() {
 
 	// 4. Start NFSv4 server
 	nfsSrv, err := nfs.NewServer(nfs.ServerConfig{
-		Port:    cfg.NFS.Port,
-		S3:      s3c,
-		Handles: handles,
+		Port:     cfg.NFS.Port,
+		BindAddr: cfg.NFS.BindAddr,
+		S3:       s3c,
+		Handles:  handles,
 	})
 	if err != nil {
 		slog.Error("failed to create NFS server", "error", err)

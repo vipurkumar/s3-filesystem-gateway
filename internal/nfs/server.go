@@ -1,3 +1,6 @@
+// Copyright 2024 s3-filesystem-gateway contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package nfs
 
 import (
@@ -21,9 +24,10 @@ type Server struct {
 
 // ServerConfig holds NFS server configuration.
 type ServerConfig struct {
-	Port    int
-	S3      *s3client.Client
-	Handles *s3fs.HandleStore
+	Port     int
+	BindAddr string
+	S3       *s3client.Client
+	Handles  *s3fs.HandleStore
 }
 
 // NewServer creates a new NFSv4 server backed by S3.
@@ -42,7 +46,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 
 	backend := nfsbackend.New(vfsLoader, nil)
 
-	addr := fmt.Sprintf(":%d", cfg.Port)
+	addr := fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.Port)
 	srv, err := nfsserver.NewServerTCP(addr, backend)
 	if err != nil {
 		return nil, fmt.Errorf("create NFS server: %w", err)

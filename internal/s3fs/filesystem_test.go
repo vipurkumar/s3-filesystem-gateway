@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -968,8 +969,8 @@ func TestChmod(t *testing.T) {
 	defer cleanup()
 
 	err := fsys.Chmod("/file", 0755)
-	if err != nil {
-		t.Fatalf("Chmod: %v", err)
+	if err != syscall.ENOTSUP {
+		t.Fatalf("Chmod: got %v, want ENOTSUP", err)
 	}
 }
 
@@ -978,8 +979,8 @@ func TestChown(t *testing.T) {
 	defer cleanup()
 
 	err := fsys.Chown("/file", 1000, 1000)
-	if err != nil {
-		t.Fatalf("Chown: %v", err)
+	if err != syscall.ENOTSUP {
+		t.Fatalf("Chown: got %v, want ENOTSUP", err)
 	}
 }
 

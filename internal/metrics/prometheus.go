@@ -1,3 +1,6 @@
+// Copyright 2024 s3-filesystem-gateway contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package metrics
 
 import (

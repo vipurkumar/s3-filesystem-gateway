@@ -1,3 +1,6 @@
+// Copyright 2024 s3-filesystem-gateway contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package config
 
 import (
@@ -29,7 +32,8 @@ type S3Config struct {
 
 // NFSConfig holds NFS server configuration.
 type NFSConfig struct {
-	Port int
+	Port     int
+	BindAddr string
 }
 
 // HealthConfig holds health/metrics server configuration.
@@ -56,15 +60,16 @@ func Load(path string) (*Config, error) {
 	cfg := &Config{
 		S3: S3Config{
 			Endpoint:  "localhost:9000",
-			AccessKey: "minioadmin",
-			SecretKey: "minioadmin",
+			AccessKey: "",
+			SecretKey: "",
 			Bucket:    "data",
 			Region:    "us-east-1",
-			UseSSL:    false,
+			UseSSL:    true,
 			PathStyle: true,
 		},
 		NFS: NFSConfig{
-			Port: 2049,
+			Port:     2049,
+			BindAddr: "0.0.0.0",
 		},
 		Health: HealthConfig{
 			Port: 9090,
@@ -103,6 +108,9 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("S3_PATH_STYLE"); v != "" {
 		cfg.S3.PathStyle = v == "true" || v == "1"
 	}
+	if v := os.Getenv("NFS_BIND_ADDR"); v != "" {
+		cfg.NFS.BindAddr = v
+	}
 	if v := os.Getenv("NFS_PORT"); v != "" {
 		port, err := strconv.Atoi(v)
 		if err != nil {
@@ -119,6 +127,11 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
+	}
+
+	// Validate required credentials
+	if cfg.S3.AccessKey == "" || cfg.S3.SecretKey == "" {
+		return nil, fmt.Errorf("S3_ACCESS_KEY and S3_SECRET_KEY environment variables are required")
 	}
 
 	return cfg, nil

@@ -17,4 +17,7 @@ COPY --from=builder /s3nfsgw /usr/local/bin/s3nfsgw
 
 EXPOSE 2049
 
+RUN adduser -D -u 10001 -g "" appuser
+USER appuser
+
 ENTRYPOINT ["/usr/local/bin/s3nfsgw"]

@@ -1,3 +1,6 @@
+// Copyright 2024 s3-filesystem-gateway contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package health
 
 import (
@@ -6,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -32,8 +36,12 @@ func NewHealthServer(addr string, checker HealthChecker) *HealthServer {
 	mux.Handle("/metrics", promhttp.Handler())
 
 	h.server = &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr:           addr,
+		Handler:        mux,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   10 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 1 << 20,
 	}
 
 	return h
@@ -75,7 +83,6 @@ func (h *HealthServer) handleReady(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		json.NewEncoder(w).Encode(map[string]string{
 			"status": "not ready",
-			"error":  err.Error(),
 		})
 		return
 	}

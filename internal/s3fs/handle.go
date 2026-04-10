@@ -1,3 +1,6 @@
+// Copyright 2024 s3-filesystem-gateway contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package s3fs
 
 import (
@@ -110,6 +113,10 @@ func (s *HandleStore) GetOrCreateInode(s3Key string) (uint64, error) {
 	// Double-check after acquiring write lock
 	if inode, ok := s.keyToInode[s3Key]; ok {
 		return inode, nil
+	}
+
+	if s.nextInode == 0 { // wrapped around
+		return 0, fmt.Errorf("inode counter overflow: maximum inodes reached")
 	}
 
 	inode := s.nextInode

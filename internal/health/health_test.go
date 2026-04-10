@@ -108,8 +108,8 @@ func TestHandleReady_NotReady(t *testing.T) {
 	if result["status"] != "not ready" {
 		t.Errorf("status = %q, want %q", result["status"], "not ready")
 	}
-	if result["error"] != "s3 unreachable" {
-		t.Errorf("error = %q, want %q", result["error"], "s3 unreachable")
+	if _, hasError := result["error"]; hasError {
+		t.Errorf("response should not contain error details, got %q", result["error"])
 	}
 }
 

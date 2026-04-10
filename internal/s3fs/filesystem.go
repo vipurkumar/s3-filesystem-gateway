@@ -1,3 +1,6 @@
+// Copyright 2024 s3-filesystem-gateway contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package s3fs
 
 import (
@@ -6,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	nfs "github.com/smallfz/libnfs-go/fs"
@@ -262,14 +266,14 @@ func (fs *S3FS) Stat(path string) (nfs.FileInfo, error) {
 
 // Chmod changes file permissions (stored as S3 metadata).
 func (fs *S3FS) Chmod(path string, mode os.FileMode) error {
-	slog.Debug("chmod not fully implemented", "path", path, "mode", mode)
-	return nil // Silently succeed; Phase 3 will implement via metadata update
+	slog.Debug("chmod not supported", "path", path, "mode", mode)
+	return syscall.ENOTSUP
 }
 
 // Chown changes file ownership (stored as S3 metadata).
 func (fs *S3FS) Chown(path string, uid, gid int) error {
-	slog.Debug("chown not fully implemented", "path", path, "uid", uid, "gid", gid)
-	return nil
+	slog.Debug("chown not supported", "path", path, "uid", uid, "gid", gid)
+	return syscall.ENOTSUP
 }
 
 // Symlink creates a symbolic link (not supported on S3).
