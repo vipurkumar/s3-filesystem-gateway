@@ -186,3 +186,8 @@ func (c *Client) CreateDirMarker(ctx context.Context, key string) error {
 	_, err := c.mc.PutObject(ctx, c.bucket, key, nil, 0, minio.PutObjectOptions{})
 	return err
 }
+
+// BucketExists checks whether the configured bucket is reachable.
+func (c *Client) BucketExists(ctx context.Context) (bool, error) {
+	return c.mc.BucketExists(ctx, c.bucket)
+}

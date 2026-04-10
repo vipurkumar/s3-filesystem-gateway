@@ -9,10 +9,11 @@ import (
 
 // Config holds the gateway configuration.
 type Config struct {
-	S3    S3Config
-	NFS   NFSConfig
-	Cache CacheConfig
-	Log   LogConfig
+	S3     S3Config
+	NFS    NFSConfig
+	Health HealthConfig
+	Cache  CacheConfig
+	Log    LogConfig
 }
 
 // S3Config holds S3 backend configuration.
@@ -27,6 +28,11 @@ type S3Config struct {
 
 // NFSConfig holds NFS server configuration.
 type NFSConfig struct {
+	Port int
+}
+
+// HealthConfig holds health/metrics server configuration.
+type HealthConfig struct {
 	Port int
 }
 
@@ -57,6 +63,9 @@ func Load(path string) (*Config, error) {
 		},
 		NFS: NFSConfig{
 			Port: 2049,
+		},
+		Health: HealthConfig{
+			Port: 9090,
 		},
 		Cache: CacheConfig{
 			MetadataTTL: 60 * time.Second,
@@ -95,6 +104,13 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("invalid NFS_PORT: %w", err)
 		}
 		cfg.NFS.Port = port
+	}
+	if v := os.Getenv("HEALTH_PORT"); v != "" {
+		port, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid HEALTH_PORT: %w", err)
+		}
+		cfg.Health.Port = port
 	}
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
