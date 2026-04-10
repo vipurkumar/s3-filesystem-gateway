@@ -35,8 +35,8 @@ Thumbs.db
 *.db
 *.bolt
 
-# Cache
-cache/
+# Cache (runtime data, not source code)
+/cache/
 tmp/
 
 # Claude Code

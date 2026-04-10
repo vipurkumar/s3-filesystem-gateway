@@ -22,7 +22,7 @@ type s3File struct {
 	info     *fileInfo
 	isDir    bool
 	offset   int64
-	reader   io.ReadCloser // lazy-loaded from S3
+	chunked  *chunkReader // ranged-read reader with adaptive prefetch
 	closed   bool
 }
 
@@ -47,23 +47,12 @@ func (f *s3File) Read(p []byte) (int, error) {
 		return 0, fmt.Errorf("cannot read directory")
 	}
 
-	// Lazy-load reader from S3
-	if f.reader == nil {
-		reader, _, err := f.fs.s3.GetObject(context.Background(), f.s3Key)
-		if err != nil {
-			return 0, err
-		}
-		f.reader = reader
-
-		// Skip to current offset if needed
-		if f.offset > 0 {
-			if _, err := io.CopyN(io.Discard, f.reader, f.offset); err != nil {
-				return 0, fmt.Errorf("seek to offset: %w", err)
-			}
-		}
+	// Lazy-init the chunk reader.
+	if f.chunked == nil {
+		f.chunked = newChunkReader(f.fs.s3, f.s3Key, f.info.Size())
 	}
 
-	n, err := f.reader.Read(p)
+	n, err := f.chunked.ReadAt(p, f.offset)
 	f.offset += int64(n)
 	return n, err
 }
@@ -93,10 +82,11 @@ func (f *s3File) Seek(offset int64, whence int) (int64, error) {
 		return 0, fmt.Errorf("negative offset")
 	}
 
-	// If we need to seek backwards, close and re-open
-	if f.reader != nil && newOffset != f.offset {
-		f.reader.Close()
-		f.reader = nil
+	// Reposition the chunk reader (invalidates buffer only if needed).
+	if f.chunked != nil && newOffset != f.offset {
+		if err := f.chunked.Seek(newOffset); err != nil {
+			return 0, err
+		}
 	}
 
 	f.offset = newOffset
@@ -172,8 +162,8 @@ func (f *s3File) Close() error {
 	}
 	f.closed = true
 
-	if f.reader != nil {
-		return f.reader.Close()
+	if f.chunked != nil {
+		return f.chunked.Close()
 	}
 	return nil
 }
