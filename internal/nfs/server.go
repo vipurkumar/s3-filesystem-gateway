@@ -7,6 +7,7 @@ import (
 	nfs "github.com/smallfz/libnfs-go/fs"
 	nfsbackend "github.com/smallfz/libnfs-go/backend"
 	nfsserver "github.com/smallfz/libnfs-go/server"
+	"github.com/vipurkumar/s3-filesystem-gateway/internal/cache"
 	s3client "github.com/vipurkumar/s3-filesystem-gateway/internal/s3"
 	"github.com/vipurkumar/s3-filesystem-gateway/internal/s3fs"
 )
@@ -30,10 +31,13 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	s3c := cfg.S3
 	handles := cfg.Handles
 
+	// Create a shared metadata cache for all sessions.
+	mc := cache.NewMetadataCache(cache.DefaultCacheConfig())
+
 	// vfsLoader creates a fresh S3 filesystem per client session
 	vfsLoader := func() nfs.FS {
 		slog.Debug("creating new S3 filesystem session")
-		return s3fs.NewS3FS(s3c, handles)
+		return s3fs.NewS3FS(s3c, handles, mc)
 	}
 
 	backend := nfsbackend.New(vfsLoader, nil)

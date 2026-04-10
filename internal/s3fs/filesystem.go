@@ -9,6 +9,7 @@ import (
 	"time"
 
 	nfs "github.com/smallfz/libnfs-go/fs"
+	"github.com/vipurkumar/s3-filesystem-gateway/internal/cache"
 	s3client "github.com/vipurkumar/s3-filesystem-gateway/internal/s3"
 )
 
@@ -16,16 +17,19 @@ import (
 type S3FS struct {
 	s3      *s3client.Client
 	handles *HandleStore
+	cache   *cache.MetadataCache
 	creds   nfs.Creds
 }
 
 var _ nfs.FS = (*S3FS)(nil)
 
-// NewS3FS creates a new S3-backed filesystem.
-func NewS3FS(s3 *s3client.Client, handles *HandleStore) *S3FS {
+// NewS3FS creates a new S3-backed filesystem. The mc parameter may be nil to
+// disable metadata caching.
+func NewS3FS(s3 *s3client.Client, handles *HandleStore, mc *cache.MetadataCache) *S3FS {
 	return &S3FS{
 		s3:      s3,
 		handles: handles,
+		cache:   mc,
 	}
 }
 
@@ -97,6 +101,7 @@ func (fs *S3FS) Open(path string) (nfs.File, error) {
 // OpenFile opens a file with the given flags and mode.
 func (fs *S3FS) OpenFile(path string, flags int, perm os.FileMode) (nfs.File, error) {
 	s3Key := s3KeyFromPath(path)
+	writable := flags&(os.O_WRONLY|os.O_RDWR|os.O_CREATE) != 0
 
 	// Root directory
 	if s3Key == "" {
@@ -119,6 +124,10 @@ func (fs *S3FS) OpenFile(path string, flags int, perm os.FileMode) (nfs.File, er
 			return nil, err
 		}
 		info := newFileInfoFromS3(nameFromPath(path), objInfo.Size, objInfo.LastModified, false, inode, objInfo.UserMetadata)
+		fs.cachePut(s3Key, info)
+		if writable {
+			return newWritableFile(fs, path, s3Key, info)
+		}
 		return &s3File{
 			fs:    fs,
 			path:  path,
@@ -126,6 +135,16 @@ func (fs *S3FS) OpenFile(path string, flags int, perm os.FileMode) (nfs.File, er
 			info:  info,
 			isDir: false,
 		}, nil
+	}
+
+	// If creating a new file, return a writable file
+	if writable {
+		inode, err := fs.handles.GetOrCreateInode(s3Key)
+		if err != nil {
+			return nil, err
+		}
+		info := newFileInfoFromS3(nameFromPath(path), 0, now(), false, inode, nil)
+		return newWritableFile(fs, path, s3Key, info)
 	}
 
 	// Try as directory (with trailing slash)
@@ -137,6 +156,7 @@ func (fs *S3FS) OpenFile(path string, flags int, perm os.FileMode) (nfs.File, er
 			return nil, err
 		}
 		info := newDirInfo(nameFromPath(path), inode)
+		fs.cachePut(dirKey, info)
 		return &s3File{
 			fs:    fs,
 			path:  path,
@@ -153,6 +173,7 @@ func (fs *S3FS) OpenFile(path string, flags int, perm os.FileMode) (nfs.File, er
 			return nil, err
 		}
 		info := newFileInfoFromS3(nameFromPath(path), objInfo.Size, objInfo.LastModified, true, inode, objInfo.UserMetadata)
+		fs.cachePut(dirKey, info)
 		return &s3File{
 			fs:    fs,
 			path:  path,
@@ -175,37 +196,65 @@ func (fs *S3FS) Stat(path string) (nfs.FileInfo, error) {
 		return newDirInfo("/", inode), nil
 	}
 
-	// Try as file
+	// Check cache first — try as file key.
+	if fi, hit := fs.cacheGet(s3Key); hit {
+		if fi == nil {
+			// Negative cache hit for file key — still try directory below.
+		} else {
+			fi.name = nameFromPath(path)
+			return fi, nil
+		}
+	}
+
+	// Check cache — try as directory key.
+	dirKey := s3DirKey(s3Key)
+	if fi, hit := fs.cacheGet(dirKey); hit {
+		if fi == nil {
+			// Negative hit for dir key too — still check S3 to be safe.
+		} else {
+			fi.name = nameFromPath(path)
+			return fi, nil
+		}
+	}
+
+	// Try as file via S3.
 	objInfo, err := fs.s3.HeadObject(context.Background(), s3Key)
 	if err == nil {
 		inode, err := fs.handles.GetOrCreateInode(s3Key)
 		if err != nil {
 			return nil, err
 		}
-		return newFileInfoFromS3(nameFromPath(path), objInfo.Size, objInfo.LastModified, false, inode, objInfo.UserMetadata), nil
+		info := newFileInfoFromS3(nameFromPath(path), objInfo.Size, objInfo.LastModified, false, inode, objInfo.UserMetadata)
+		fs.cachePut(s3Key, info)
+		return info, nil
 	}
 
-	// Try as directory
-	dirKey := s3DirKey(s3Key)
-
-	// Check for explicit directory marker
+	// Check for explicit directory marker.
 	if objInfo, err := fs.s3.HeadObject(context.Background(), dirKey); err == nil {
 		inode, err := fs.handles.GetOrCreateInode(dirKey)
 		if err != nil {
 			return nil, err
 		}
-		return newFileInfoFromS3(nameFromPath(path), objInfo.Size, objInfo.LastModified, true, inode, objInfo.UserMetadata), nil
+		info := newFileInfoFromS3(nameFromPath(path), objInfo.Size, objInfo.LastModified, true, inode, objInfo.UserMetadata)
+		fs.cachePut(dirKey, info)
+		return info, nil
 	}
 
-	// Check for implicit directory (objects with this prefix exist)
+	// Check for implicit directory (objects with this prefix exist).
 	entries, err := fs.s3.ListObjects(context.Background(), dirKey)
 	if err == nil && len(entries) > 0 {
 		inode, err := fs.handles.GetOrCreateInode(dirKey)
 		if err != nil {
 			return nil, err
 		}
-		return newDirInfo(nameFromPath(path), inode), nil
+		info := newDirInfo(nameFromPath(path), inode)
+		fs.cachePut(dirKey, info)
+		return info, nil
 	}
+
+	// Not found — cache negative entries for both file and dir keys.
+	fs.cachePutNegative(s3Key)
+	fs.cachePutNegative(dirKey)
 
 	return nil, os.ErrNotExist
 }
@@ -239,20 +288,98 @@ func (fs *S3FS) Link(oldname, newname string) error {
 
 // Rename moves a file or directory.
 func (fs *S3FS) Rename(oldpath, newpath string) error {
-	// Phase 3: CopyObject + DeleteObject
-	return fmt.Errorf("rename not supported yet")
+	ctx := context.Background()
+	oldKey := s3KeyFromPath(oldpath)
+	newKey := s3KeyFromPath(newpath)
+
+	// Try as file first
+	if _, err := fs.s3.HeadObject(ctx, oldKey); err == nil {
+		if err := fs.s3.CopyObject(ctx, oldKey, newKey); err != nil {
+			return fmt.Errorf("copy object: %w", err)
+		}
+		if err := fs.s3.DeleteObject(ctx, oldKey); err != nil {
+			return fmt.Errorf("delete old object: %w", err)
+		}
+		_ = fs.handles.RenameKey(oldKey, newKey)
+		fs.cacheInvalidate(oldKey)
+		fs.cacheInvalidate(newKey)
+		fs.cacheInvalidateParent(oldKey)
+		fs.cacheInvalidateParent(newKey)
+		return nil
+	}
+
+	// Try as directory
+	oldDirKey := s3DirKey(oldKey)
+	newDirKey := s3DirKey(newKey)
+	if _, err := fs.s3.HeadObject(ctx, oldDirKey); err == nil {
+		if err := fs.s3.CopyObject(ctx, oldDirKey, newDirKey); err != nil {
+			return fmt.Errorf("copy dir marker: %w", err)
+		}
+		if err := fs.s3.DeleteObject(ctx, oldDirKey); err != nil {
+			return fmt.Errorf("delete old dir marker: %w", err)
+		}
+		_ = fs.handles.RenameKey(oldDirKey, newDirKey)
+		fs.cacheInvalidate(oldDirKey)
+		fs.cacheInvalidate(newDirKey)
+		fs.cacheInvalidateParent(oldDirKey)
+		fs.cacheInvalidateParent(newDirKey)
+		return nil
+	}
+
+	return os.ErrNotExist
 }
 
 // Remove deletes a file or directory.
 func (fs *S3FS) Remove(path string) error {
-	// Phase 3: DeleteObject
-	return fmt.Errorf("remove not supported yet")
+	ctx := context.Background()
+	s3Key := s3KeyFromPath(path)
+
+	// Try as file first
+	if _, err := fs.s3.HeadObject(ctx, s3Key); err == nil {
+		if err := fs.s3.DeleteObject(ctx, s3Key); err != nil {
+			return fmt.Errorf("delete object: %w", err)
+		}
+		_ = fs.handles.RemoveByKey(s3Key)
+		fs.cacheInvalidate(s3Key)
+		fs.cacheInvalidateParent(s3Key)
+		return nil
+	}
+
+	// Try as directory
+	dirKey := s3DirKey(s3Key)
+	if _, err := fs.s3.HeadObject(ctx, dirKey); err == nil {
+		if err := fs.s3.DeleteObject(ctx, dirKey); err != nil {
+			return fmt.Errorf("delete dir marker: %w", err)
+		}
+		_ = fs.handles.RemoveByKey(dirKey)
+		fs.cacheInvalidate(dirKey)
+		fs.cacheInvalidateParent(dirKey)
+		return nil
+	}
+
+	return os.ErrNotExist
 }
 
 // MkdirAll creates a directory (and parents).
 func (fs *S3FS) MkdirAll(path string, perm os.FileMode) error {
-	// Phase 3: create directory marker
-	return fmt.Errorf("mkdir not supported yet")
+	ctx := context.Background()
+	s3Key := s3KeyFromPath(path)
+	dirKey := s3DirKey(s3Key)
+
+	if err := fs.s3.CreateDirMarker(ctx, dirKey); err != nil {
+		return fmt.Errorf("create dir marker: %w", err)
+	}
+
+	if _, err := fs.handles.GetOrCreateInode(dirKey); err != nil {
+		return fmt.Errorf("allocate inode: %w", err)
+	}
+
+	// Invalidate cache so subsequent Stat/Readdir see the new directory.
+	fs.cacheInvalidate(dirKey)
+	fs.cacheInvalidate(s3Key)
+	fs.cacheInvalidateParent(dirKey)
+
+	return nil
 }
 
 // S3Client returns the underlying S3 client (for use by the NFS server layer).

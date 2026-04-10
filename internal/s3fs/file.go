@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	nfs "github.com/smallfz/libnfs-go/fs"
+	"github.com/vipurkumar/s3-filesystem-gateway/internal/cache"
 	s3client "github.com/vipurkumar/s3-filesystem-gateway/internal/s3"
 )
 
@@ -111,12 +112,34 @@ func (f *s3File) Readdir(count int) ([]nfs.FileInfo, error) {
 		prefix += "/"
 	}
 
+	// Check directory listing cache first.
+	if cachedEntries, ok := f.fs.cacheGetDirListing(prefix); ok {
+		var infos []nfs.FileInfo
+		for _, ce := range cachedEntries {
+			name := nameFromS3Key(ce.S3Key)
+			if name == "" {
+				continue
+			}
+			inode, err := f.fs.handles.GetOrCreateInode(ce.S3Key)
+			if err != nil {
+				return nil, fmt.Errorf("allocate inode for %q: %w", ce.S3Key, err)
+			}
+			fi := cacheEntryToFileInfo(ce, name, inode)
+			infos = append(infos, fi)
+		}
+		if count > 0 && len(infos) > count {
+			infos = infos[:count]
+		}
+		return infos, nil
+	}
+
 	entries, err := f.fs.s3.ListObjects(context.Background(), prefix)
 	if err != nil {
 		return nil, err
 	}
 
 	var infos []nfs.FileInfo
+	var cacheEntries []cache.CacheEntry
 	for _, entry := range entries {
 		name := entry.Key
 		// Strip the prefix to get the relative name
@@ -144,7 +167,21 @@ func (f *s3File) Readdir(count int) ([]nfs.FileInfo, error) {
 
 		fi := newFileInfoFromS3(name, entry.Size, entry.LastModified, isDir, inode, meta)
 		infos = append(infos, fi)
+
+		// Also populate individual entry cache and build dir listing cache entry.
+		f.fs.cachePut(entry.Key, fi)
+		cacheEntries = append(cacheEntries, cache.CacheEntry{
+			S3Key:   entry.Key,
+			Size:    fi.size,
+			ModTime: fi.modTime,
+			Mode:    fi.mode,
+			IsDir:   fi.isDir,
+			Inode:   fi.inode,
+		})
 	}
+
+	// Store the directory listing in cache.
+	f.fs.cachePutDirListing(prefix, cacheEntries)
 
 	if count > 0 && len(infos) > count {
 		infos = infos[:count]
@@ -165,6 +202,124 @@ func (f *s3File) Close() error {
 	if f.chunked != nil {
 		return f.chunked.Close()
 	}
+	return nil
+}
+
+// s3WritableFile buffers writes to a local temp file and uploads to S3 on Close.
+type s3WritableFile struct {
+	mu      sync.Mutex
+	fs      *S3FS
+	path    string // full POSIX path
+	s3Key   string // S3 object key
+	info    *fileInfo
+	tmp     *os.File // local temp file for buffering writes
+	closed  bool
+}
+
+var _ nfs.File = (*s3WritableFile)(nil)
+
+func newWritableFile(fsys *S3FS, path, s3Key string, info *fileInfo) (*s3WritableFile, error) {
+	tmp, err := os.CreateTemp("", "s3fs-write-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp file: %w", err)
+	}
+	return &s3WritableFile{
+		fs:    fsys,
+		path:  path,
+		s3Key: s3Key,
+		info:  info,
+		tmp:   tmp,
+	}, nil
+}
+
+func (f *s3WritableFile) Name() string {
+	return f.path
+}
+
+func (f *s3WritableFile) Stat() (nfs.FileInfo, error) {
+	return f.info, nil
+}
+
+func (f *s3WritableFile) Read(p []byte) (int, error) {
+	return 0, fmt.Errorf("cannot read a write-only file")
+}
+
+func (f *s3WritableFile) Write(p []byte) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.closed {
+		return 0, os.ErrClosed
+	}
+	return f.tmp.Write(p)
+}
+
+func (f *s3WritableFile) Seek(offset int64, whence int) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.closed {
+		return 0, os.ErrClosed
+	}
+	return f.tmp.Seek(offset, whence)
+}
+
+func (f *s3WritableFile) Truncate() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.closed {
+		return os.ErrClosed
+	}
+	return f.tmp.Truncate(0)
+}
+
+func (f *s3WritableFile) Sync() error {
+	return nil // upload happens on Close
+}
+
+func (f *s3WritableFile) Readdir(count int) ([]nfs.FileInfo, error) {
+	return nil, fmt.Errorf("not a directory")
+}
+
+func (f *s3WritableFile) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.closed {
+		return nil
+	}
+	f.closed = true
+
+	defer func() {
+		f.tmp.Close()
+		os.Remove(f.tmp.Name())
+	}()
+
+	// Get file size
+	stat, err := f.tmp.Stat()
+	if err != nil {
+		return fmt.Errorf("stat temp file: %w", err)
+	}
+	size := stat.Size()
+
+	// Seek to beginning for upload
+	if _, err := f.tmp.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seek temp file: %w", err)
+	}
+
+	// Build POSIX metadata
+	meta := posixMetadata(DefaultUID, DefaultGID, DefaultFileMode)
+
+	// Upload to S3
+	if err := f.fs.s3.PutObject(context.Background(), f.s3Key, f.tmp, size, meta); err != nil {
+		return fmt.Errorf("upload to S3: %w", err)
+	}
+
+	// Invalidate cache so subsequent reads see the new data.
+	f.fs.cacheInvalidate(f.s3Key)
+	f.fs.cacheInvalidateParent(f.s3Key)
+
 	return nil
 }
 
