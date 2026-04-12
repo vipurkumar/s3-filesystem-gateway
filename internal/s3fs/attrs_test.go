@@ -220,3 +220,16 @@ func TestPosixMetadata_DirMode(t *testing.T) {
 		t.Errorf("Mode = %q, want 755", m[MetaKeyMode])
 	}
 }
+
+func TestFileInfoETag(t *testing.T) {
+	meta := map[string]string{"Uid": "1000", "Gid": "1000", "Mode": "0644"}
+	fi := newFileInfoFromS3("test.txt", 100, time.Now(), false, 42, meta)
+	if fi.etag != "" {
+		t.Errorf("expected empty etag without etag param, got %q", fi.etag)
+	}
+
+	fi2 := newFileInfoFromS3WithETag("test.txt", 100, time.Now(), false, 42, meta, "abc123")
+	if fi2.etag != "abc123" {
+		t.Errorf("expected etag 'abc123', got %q", fi2.etag)
+	}
+}

@@ -35,6 +35,7 @@ type fileInfo struct {
 	isDir    bool
 	inode    uint64
 	numLinks int
+	etag     string
 }
 
 var _ nfs.FileInfo = (*fileInfo)(nil)
@@ -66,6 +67,13 @@ func newFileInfoFromS3(name string, size int64, lastModified time.Time, isDir bo
 		inode:    inode,
 		numLinks: numLinks,
 	}
+}
+
+// newFileInfoFromS3WithETag creates a fileInfo including the S3 ETag for cache coherency.
+func newFileInfoFromS3WithETag(name string, size int64, lastModified time.Time, isDir bool, inode uint64, userMeta map[string]string, etag string) *fileInfo {
+	fi := newFileInfoFromS3(name, size, lastModified, isDir, inode, userMeta)
+	fi.etag = etag
+	return fi
 }
 
 // newDirInfo creates a fileInfo for a directory.
