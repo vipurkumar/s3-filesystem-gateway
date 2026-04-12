@@ -324,6 +324,7 @@ func (f *s3WritableFile) Close() error {
 	// Invalidate cache so subsequent reads see the new data.
 	f.fs.cacheInvalidate(f.s3Key)
 	f.fs.cacheInvalidateParent(f.s3Key)
+	f.fs.dataCacheInvalidate(f.s3Key)
 
 	return nil
 }

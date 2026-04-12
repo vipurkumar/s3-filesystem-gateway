@@ -313,6 +313,8 @@ func (fs *S3FS) Rename(oldpath, newpath string) error {
 		fs.cacheInvalidate(newKey)
 		fs.cacheInvalidateParent(oldKey)
 		fs.cacheInvalidateParent(newKey)
+		fs.dataCacheInvalidate(oldKey)
+		fs.dataCacheInvalidate(newKey)
 		return nil
 	}
 
@@ -331,6 +333,8 @@ func (fs *S3FS) Rename(oldpath, newpath string) error {
 		fs.cacheInvalidate(newDirKey)
 		fs.cacheInvalidateParent(oldDirKey)
 		fs.cacheInvalidateParent(newDirKey)
+		fs.dataCacheInvalidate(oldDirKey)
+		fs.dataCacheInvalidate(newDirKey)
 		return nil
 	}
 
@@ -350,6 +354,7 @@ func (fs *S3FS) Remove(path string) error {
 		_ = fs.handles.RemoveByKey(s3Key)
 		fs.cacheInvalidate(s3Key)
 		fs.cacheInvalidateParent(s3Key)
+		fs.dataCacheInvalidate(s3Key)
 		return nil
 	}
 
@@ -362,6 +367,7 @@ func (fs *S3FS) Remove(path string) error {
 		_ = fs.handles.RemoveByKey(dirKey)
 		fs.cacheInvalidate(dirKey)
 		fs.cacheInvalidateParent(dirKey)
+		fs.dataCacheInvalidate(dirKey)
 		return nil
 	}
 

@@ -83,6 +83,14 @@ func (fs *S3FS) cacheInvalidate(s3Key string) {
 	fs.cache.Invalidate(s3Key)
 }
 
+// dataCacheInvalidate removes all cached data for the given S3 key.
+func (fs *S3FS) dataCacheInvalidate(s3Key string) {
+	if fs.dataCache == nil {
+		return
+	}
+	fs.dataCache.Invalidate(s3Key)
+}
+
 // cacheInvalidateParent invalidates the parent directory listing for the given
 // S3 key so that subsequent Readdir calls will re-fetch from S3.
 func (fs *S3FS) cacheInvalidateParent(s3Key string) {
