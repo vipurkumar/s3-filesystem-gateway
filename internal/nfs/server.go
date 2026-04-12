@@ -24,10 +24,12 @@ type Server struct {
 
 // ServerConfig holds NFS server configuration.
 type ServerConfig struct {
-	Port     int
-	BindAddr string
-	S3       *s3client.Client
-	Handles  *s3fs.HandleStore
+	Port         int
+	BindAddr     string
+	S3           *s3client.Client
+	Handles      *s3fs.HandleStore
+	DataCacheDir string
+	DataCacheMax int64
 }
 
 // NewServer creates a new NFSv4 server backed by S3.
@@ -38,10 +40,24 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// Create a shared metadata cache for all sessions.
 	mc := cache.NewMetadataCache(cache.DefaultCacheConfig())
 
+	// Create shared data cache if configured.
+	var dc *cache.DataCache
+	if cfg.DataCacheDir != "" {
+		var err error
+		dcConfig := cache.DataCacheConfig{
+			Dir:     cfg.DataCacheDir,
+			MaxSize: cfg.DataCacheMax,
+		}
+		dc, err = cache.NewDataCache(dcConfig)
+		if err != nil {
+			return nil, fmt.Errorf("create data cache: %w", err)
+		}
+	}
+
 	// vfsLoader creates a fresh S3 filesystem per client session
 	vfsLoader := func() nfs.FS {
 		slog.Debug("creating new S3 filesystem session")
-		return s3fs.NewS3FS(s3c, handles, mc, nil)
+		return s3fs.NewS3FS(s3c, handles, mc, dc)
 	}
 
 	backend := nfsbackend.New(vfsLoader, nil)
@@ -49,6 +65,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	addr := fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.Port)
 	srv, err := nfsserver.NewServerTCP(addr, backend)
 	if err != nil {
+		if dc != nil {
+			dc.Stop()
+		}
 		return nil, fmt.Errorf("create NFS server: %w", err)
 	}
 

@@ -114,10 +114,12 @@ func main() {
 
 	// 4. Start NFSv4 server
 	nfsSrv, err := nfs.NewServer(nfs.ServerConfig{
-		Port:     cfg.NFS.Port,
-		BindAddr: cfg.NFS.BindAddr,
-		S3:       s3c,
-		Handles:  handles,
+		Port:         cfg.NFS.Port,
+		BindAddr:     cfg.NFS.BindAddr,
+		S3:           s3c,
+		Handles:      handles,
+		DataCacheDir: cfg.Cache.DataDir,
+		DataCacheMax: cfg.Cache.DataMaxSize,
 	})
 	if err != nil {
 		slog.Error("failed to create NFS server", "error", err)
