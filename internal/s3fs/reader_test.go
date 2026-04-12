@@ -501,3 +501,96 @@ func TestChunkReaderDataCacheMiss(t *testing.T) {
 		t.Errorf("got %q, want %q", string(buf[:n]), "from S3")
 	}
 }
+
+func TestChunkReaderSmallFileCached(t *testing.T) {
+	dir := t.TempDir()
+	dc, err := cache.NewDataCache(cache.DataCacheConfig{
+		Dir:              dir,
+		MaxSize:          10 * 1024 * 1024,
+		EvictionInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dc.Stop()
+
+	// Small file (64KB, under 128KB threshold)
+	data := make([]byte, 64*1024)
+	for i := range data {
+		data[i] = byte(i % 256)
+	}
+
+	s3Calls := 0
+	mock := &mockS3ForReader{
+		getRangeFn: func(ctx context.Context, key string, off, length int64) (io.ReadCloser, error) {
+			s3Calls++
+			end := off + length
+			if end > int64(len(data)) {
+				end = int64(len(data))
+			}
+			return io.NopCloser(bytes.NewReader(data[off:end])), nil
+		},
+	}
+
+	// First read — should fetch from S3 and cache
+	r := newChunkReader(mock, "small-file", int64(len(data)), dc, "etag-small")
+	buf := make([]byte, 1024)
+	_, err = r.ReadAt(buf, 0)
+	if err != nil && err != io.EOF {
+		t.Fatal(err)
+	}
+	if s3Calls != 1 {
+		t.Errorf("expected 1 S3 call on first read, got %d", s3Calls)
+	}
+
+	// Second reader — should hit cache, no additional S3 call
+	r2 := newChunkReader(mock, "small-file", int64(len(data)), dc, "etag-small")
+	_, err = r2.ReadAt(buf, 0)
+	if err != nil && err != io.EOF {
+		t.Fatal(err)
+	}
+	if s3Calls != 1 {
+		t.Errorf("expected still 1 S3 call after cache hit, got %d", s3Calls)
+	}
+}
+
+func TestChunkReaderLargeFileNotCached(t *testing.T) {
+	dir := t.TempDir()
+	dc, err := cache.NewDataCache(cache.DataCacheConfig{
+		Dir:              dir,
+		MaxSize:          10 * 1024 * 1024,
+		EvictionInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dc.Stop()
+
+	// Large file (256KB, over 128KB threshold)
+	data := make([]byte, 256*1024)
+
+	s3Calls := 0
+	mock := &mockS3ForReader{
+		getRangeFn: func(ctx context.Context, key string, off, length int64) (io.ReadCloser, error) {
+			s3Calls++
+			end := off + length
+			if end > int64(len(data)) {
+				end = int64(len(data))
+			}
+			return io.NopCloser(bytes.NewReader(data[off:end])), nil
+		},
+	}
+
+	r := newChunkReader(mock, "large-file", int64(len(data)), dc, "etag-large")
+	buf := make([]byte, 1024)
+	_, _ = r.ReadAt(buf, 0)
+
+	// Verify large file was NOT cached
+	stats := dc.Stats()
+	if stats.EntryCount != 0 {
+		t.Errorf("large file should not be cached, but cache has %d entries", stats.EntryCount)
+	}
+	if s3Calls != 1 {
+		t.Errorf("expected 1 S3 call, got %d", s3Calls)
+	}
+}
