@@ -19,7 +19,7 @@ func newTestS3FS(t *testing.T, mc *cache.MetadataCache) *S3FS {
 		t.Fatalf("NewHandleStore: %v", err)
 	}
 	t.Cleanup(func() { handles.Close() })
-	return NewS3FS(nil, handles, mc)
+	return NewS3FS(nil, handles, mc, nil)
 }
 
 func newTestCache(t *testing.T) *cache.MetadataCache {

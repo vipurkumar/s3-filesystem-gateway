@@ -41,7 +41,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	// vfsLoader creates a fresh S3 filesystem per client session
 	vfsLoader := func() nfs.FS {
 		slog.Debug("creating new S3 filesystem session")
-		return s3fs.NewS3FS(s3c, handles, mc)
+		return s3fs.NewS3FS(s3c, handles, mc, nil)
 	}
 
 	backend := nfsbackend.New(vfsLoader, nil)

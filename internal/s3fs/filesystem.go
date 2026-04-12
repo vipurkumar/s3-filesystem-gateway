@@ -19,21 +19,23 @@ import (
 
 // S3FS implements the libnfs-go fs.FS interface backed by S3.
 type S3FS struct {
-	s3      s3client.S3API
-	handles *HandleStore
-	cache   *cache.MetadataCache
-	creds   nfs.Creds
+	s3        s3client.S3API
+	handles   *HandleStore
+	cache     *cache.MetadataCache
+	dataCache *cache.DataCache
+	creds     nfs.Creds
 }
 
 var _ nfs.FS = (*S3FS)(nil)
 
 // NewS3FS creates a new S3-backed filesystem. The mc parameter may be nil to
-// disable metadata caching.
-func NewS3FS(s3 s3client.S3API, handles *HandleStore, mc *cache.MetadataCache) *S3FS {
+// disable metadata caching. The dc parameter may be nil to disable data caching.
+func NewS3FS(s3 s3client.S3API, handles *HandleStore, mc *cache.MetadataCache, dc *cache.DataCache) *S3FS {
 	return &S3FS{
-		s3:      s3,
-		handles: handles,
-		cache:   mc,
+		s3:        s3,
+		handles:   handles,
+		cache:     mc,
+		dataCache: dc,
 	}
 }
 

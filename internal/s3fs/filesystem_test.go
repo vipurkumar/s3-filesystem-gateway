@@ -242,7 +242,7 @@ func setupTestFS(t *testing.T) (*S3FS, *mockS3, func()) {
 		EvictionInterval: 60 * time.Second, // don't evict during tests
 	})
 
-	fsys := NewS3FS(mock, handles, mc)
+	fsys := NewS3FS(mock, handles, mc, nil)
 	cleanup := func() {
 		mc.Stop()
 		handles.Close()
@@ -260,7 +260,7 @@ func setupTestFSNoCache(t *testing.T) (*S3FS, *mockS3, func()) {
 		t.Fatalf("NewHandleStore: %v", err)
 	}
 
-	fsys := NewS3FS(mock, handles, nil)
+	fsys := NewS3FS(mock, handles, nil, nil)
 	cleanup := func() {
 		handles.Close()
 	}
