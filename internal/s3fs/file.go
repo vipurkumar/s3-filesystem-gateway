@@ -101,7 +101,29 @@ func (f *s3File) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (f *s3File) Truncate() error {
-	return fmt.Errorf("truncate not supported yet")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.closed {
+		return os.ErrClosed
+	}
+
+	ctx := context.Background()
+	meta := posixMetadata(DefaultUID, DefaultGID, DefaultFileMode)
+	if err := f.fs.s3.PutObject(ctx, f.s3Key, strings.NewReader(""), 0, meta); err != nil {
+		return fmt.Errorf("truncate: %w", err)
+	}
+
+	f.info.size = 0
+	f.offset = 0
+	if f.chunked != nil {
+		f.chunked.Close()
+		f.chunked = nil
+	}
+
+	f.fs.cacheInvalidate(f.s3Key)
+	f.fs.dataCacheInvalidate(f.s3Key)
+	return nil
 }
 
 func (f *s3File) Sync() error {
