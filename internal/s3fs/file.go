@@ -27,6 +27,7 @@ type s3File struct {
 	s3Key    string // S3 object key
 	info     *fileInfo
 	isDir    bool
+	writable bool // true if opened with write flags
 	offset   int64
 	chunked  *chunkReader // ranged-read reader with adaptive prefetch
 	closed   bool
@@ -106,6 +107,9 @@ func (f *s3File) Truncate() error {
 
 	if f.closed {
 		return os.ErrClosed
+	}
+	if !f.writable {
+		return fmt.Errorf("truncate %s: read-only file descriptor", f.path)
 	}
 
 	ctx := context.Background()
