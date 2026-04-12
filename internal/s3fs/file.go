@@ -55,7 +55,7 @@ func (f *s3File) Read(p []byte) (int, error) {
 
 	// Lazy-init the chunk reader.
 	if f.chunked == nil {
-		f.chunked = newChunkReader(f.fs.s3, f.s3Key, f.info.Size())
+		f.chunked = newChunkReader(f.fs.s3, f.s3Key, f.info.Size(), f.fs.dataCache, f.etag)
 	}
 
 	n, err := f.chunked.ReadAt(p, f.offset)

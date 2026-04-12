@@ -4,10 +4,12 @@
 package s3fs
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 
+	"github.com/vipurkumar/s3-filesystem-gateway/internal/cache"
 	s3client "github.com/vipurkumar/s3-filesystem-gateway/internal/s3"
 )
 
@@ -36,16 +38,21 @@ type chunkReader struct {
 	chunkSize int   // current chunk fetch size
 	seqCount  int   // number of consecutive sequential reads
 	lastEnd   int64 // offset immediately after previous read (to detect sequential)
+
+	dc   *cache.DataCache // may be nil
+	etag string
 }
 
 // newChunkReader creates a chunkReader for the given S3 object.
-func newChunkReader(s3 s3client.S3API, key string, size int64) *chunkReader {
+func newChunkReader(s3 s3client.S3API, key string, size int64, dc *cache.DataCache, etag string) *chunkReader {
 	return &chunkReader{
 		s3:        s3,
 		s3Key:     key,
 		size:      size,
 		chunkSize: chunkSize1MB,
 		lastEnd:   -1,
+		dc:        dc,
+		etag:      etag,
 	}
 }
 
@@ -108,6 +115,33 @@ func (r *chunkReader) fetchChunk(off int64) error {
 		return io.EOF
 	}
 
+	// Try data cache first.
+	if r.dc != nil && r.etag != "" {
+		if rc, ok := r.dc.Get(r.s3Key, r.etag); ok {
+			defer rc.Close()
+			if seeker, ok := rc.(io.ReadSeeker); ok {
+				if _, err := seeker.Seek(off, io.SeekStart); err == nil {
+					if cap(r.buf) < int(length) {
+						r.buf = make([]byte, length)
+					} else {
+						r.buf = r.buf[:length]
+					}
+					n, readErr := io.ReadFull(rc, r.buf)
+					if readErr == io.ErrUnexpectedEOF {
+						readErr = nil
+					}
+					if readErr == nil || readErr == io.EOF {
+						r.bufStart = off
+						r.bufLen = n
+						r.buf = r.buf[:n]
+						return nil
+					}
+				}
+			}
+			// Cache read failed, fall through to S3.
+		}
+	}
+
 	rc, err := r.s3.GetObjectRange(context.Background(), r.s3Key, off, length)
 	if err != nil {
 		return fmt.Errorf("fetch chunk at %d: %w", off, err)
@@ -133,6 +167,12 @@ func (r *chunkReader) fetchChunk(off int64) error {
 	r.bufStart = off
 	r.bufLen = n
 	r.buf = r.buf[:n]
+
+	// Cache small files (<=128KB) for future reads.
+	if r.dc != nil && r.etag != "" && r.size <= 128*1024 {
+		_ = r.dc.Put(r.s3Key, r.etag, bytes.NewReader(r.buf[:n]), int64(n))
+	}
+
 	return nil
 }
 

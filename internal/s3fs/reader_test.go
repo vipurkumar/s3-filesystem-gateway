@@ -1,12 +1,15 @@
 package s3fs
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/vipurkumar/s3-filesystem-gateway/internal/cache"
 	s3client "github.com/vipurkumar/s3-filesystem-gateway/internal/s3"
 )
 
@@ -412,5 +415,89 @@ func TestSeekWithinBuffer(t *testing.T) {
 
 // Ensure chunkReader compiles against real s3client.Client (type check only).
 func TestChunkReaderTypeCheck(t *testing.T) {
-	var _ *chunkReader = newChunkReader((s3client.S3API)((*s3client.Client)(nil)), "key", 100)
+	var _ *chunkReader = newChunkReader((s3client.S3API)((*s3client.Client)(nil)), "key", 100, nil, "")
+}
+
+// mockS3ForReader is a test mock that satisfies s3client.S3API for reader tests.
+type mockS3ForReader struct {
+	s3client.S3API // embed to satisfy interface
+	getRangeFn     func(ctx context.Context, key string, off, length int64) (io.ReadCloser, error)
+}
+
+func (m *mockS3ForReader) GetObjectRange(ctx context.Context, key string, off, length int64) (io.ReadCloser, error) {
+	return m.getRangeFn(ctx, key, off, length)
+}
+
+func TestChunkReaderDataCacheHit(t *testing.T) {
+	dir := t.TempDir()
+	dc, err := cache.NewDataCache(cache.DataCacheConfig{
+		Dir:              dir,
+		MaxSize:          10 * 1024 * 1024,
+		EvictionInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dc.Stop()
+
+	data := []byte("hello from cache")
+	err = dc.Put("test-key", "etag-1", bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s3Called := false
+	mock := &mockS3ForReader{
+		getRangeFn: func(ctx context.Context, key string, off, length int64) (io.ReadCloser, error) {
+			s3Called = true
+			return nil, fmt.Errorf("should not be called")
+		},
+	}
+
+	r := newChunkReader(mock, "test-key", int64(len(data)), dc, "etag-1")
+	buf := make([]byte, len(data))
+	n, err := r.ReadAt(buf, 0)
+	if err != nil && err != io.EOF {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(buf[:n]) != "hello from cache" {
+		t.Errorf("got %q, want %q", string(buf[:n]), "hello from cache")
+	}
+	if s3Called {
+		t.Error("S3 should not have been called on cache hit")
+	}
+}
+
+func TestChunkReaderDataCacheMiss(t *testing.T) {
+	dir := t.TempDir()
+	dc, err := cache.NewDataCache(cache.DataCacheConfig{
+		Dir:              dir,
+		MaxSize:          10 * 1024 * 1024,
+		EvictionInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dc.Stop()
+
+	data := []byte("from S3")
+	mock := &mockS3ForReader{
+		getRangeFn: func(ctx context.Context, key string, off, length int64) (io.ReadCloser, error) {
+			end := off + length
+			if end > int64(len(data)) {
+				end = int64(len(data))
+			}
+			return io.NopCloser(bytes.NewReader(data[off:end])), nil
+		},
+	}
+
+	r := newChunkReader(mock, "miss-key", int64(len(data)), dc, "etag-miss")
+	buf := make([]byte, len(data))
+	n, err := r.ReadAt(buf, 0)
+	if err != nil && err != io.EOF {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(buf[:n]) != "from S3" {
+		t.Errorf("got %q, want %q", string(buf[:n]), "from S3")
+	}
 }
