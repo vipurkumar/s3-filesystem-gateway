@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	nfs "github.com/smallfz/libnfs-go/fs"
 	"github.com/vipurkumar/s3-filesystem-gateway/internal/cache"
@@ -325,6 +326,17 @@ func (f *s3WritableFile) Close() error {
 	f.fs.cacheInvalidate(f.s3Key)
 	f.fs.cacheInvalidateParent(f.s3Key)
 	f.fs.dataCacheInvalidate(f.s3Key)
+
+	// Refresh metadata cache with new file info for read-after-write consistency.
+	f.fs.cachePut(f.s3Key, &fileInfo{
+		name:     nameFromPath(f.path),
+		size:     size,
+		mode:     DefaultFileMode,
+		modTime:  time.Now().UTC(),
+		isDir:    false,
+		inode:    f.info.inode,
+		numLinks: 1,
+	})
 
 	return nil
 }
