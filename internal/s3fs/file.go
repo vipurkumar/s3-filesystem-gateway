@@ -29,6 +29,7 @@ type s3File struct {
 	offset   int64
 	chunked  *chunkReader // ranged-read reader with adaptive prefetch
 	closed   bool
+	etag     string
 }
 
 var _ nfs.File = (*s3File)(nil)

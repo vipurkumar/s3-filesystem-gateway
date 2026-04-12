@@ -129,7 +129,7 @@ func (fs *S3FS) OpenFile(path string, flags int, perm os.FileMode) (nfs.File, er
 		if err != nil {
 			return nil, err
 		}
-		info := newFileInfoFromS3(nameFromPath(path), objInfo.Size, objInfo.LastModified, false, inode, objInfo.UserMetadata)
+		info := newFileInfoFromS3WithETag(nameFromPath(path), objInfo.Size, objInfo.LastModified, false, inode, objInfo.UserMetadata, objInfo.ETag)
 		fs.cachePut(s3Key, info)
 		if writable {
 			return newWritableFile(fs, path, s3Key, info)
@@ -140,6 +140,7 @@ func (fs *S3FS) OpenFile(path string, flags int, perm os.FileMode) (nfs.File, er
 			s3Key: s3Key,
 			info:  info,
 			isDir: false,
+			etag:  objInfo.ETag,
 		}, nil
 	}
 
