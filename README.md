@@ -47,8 +47,10 @@ No clone required — download a single compose file that pulls the gateway imag
 curl -O https://raw.githubusercontent.com/rupivbluegreen/s3-filesystem-gateway/main/deployments/docker/docker-compose.quickstart.yml
 docker compose -f docker-compose.quickstart.yml up -d
 
-# Mount from another terminal (Linux)
-sudo mount -t nfs4 -o port=2049,nolock localhost:/ /mnt/s3
+# Mount from another terminal (Linux). vers=4.0 is required — libnfs-go
+# does not implement NFSv4.1 session setup (EXCHANGE_ID/CREATE_SESSION),
+# so modern Linux kernels must be told to use v4.0 explicitly.
+sudo mount -t nfs4 -o vers=4.0,port=2049,nolock localhost:/ /mnt/s3
 
 # Use it
 ls /mnt/s3
