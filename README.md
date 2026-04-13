@@ -65,7 +65,7 @@ mkdir /mnt/s3/subdir
 Images are built multi-arch (`linux/amd64` + `linux/arm64`) on each `v*` git tag and published to both registries:
 
 - `ghcr.io/rupivbluegreen/s3-filesystem-gateway`
-- `docker.io/rupivbluegreen/s3-filesystem-gateway`
+- `docker.io/vipurkumar/s3-filesystem-gateway`
 
 Tag conventions: `:latest` (latest stable release), `:0.1.0` (exact semver), `:0.1` (minor), `:0` (major).
 
