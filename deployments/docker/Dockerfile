@@ -19,7 +19,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
       -X main.buildDate=${BUILD_DATE}" \
     -o /s3nfsgw ./cmd/s3nfsgw
 
-FROM alpine:3.19
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates
 
