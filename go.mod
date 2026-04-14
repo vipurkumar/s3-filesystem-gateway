@@ -37,3 +37,5 @@ require (
 	golang.org/x/text v0.32.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 )
+
+replace github.com/smallfz/libnfs-go => ../libnfs-go
