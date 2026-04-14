@@ -36,34 +36,21 @@ const xattrMaxTotalBytes = 6144
 // _ compile-time assertion: S3FS must satisfy fs.XattrCapable.
 var _ fs.XattrCapable = (*S3FS)(nil)
 
-// stripUserPrefix turns "user.checksum" into "checksum". We validate
-// the prefix at the NFS layer and defensively re-validate here so a
-// misbehaving or future caller can't punch through to the trusted.*
-// namespace via this method.
-func stripUserPrefix(name string) (string, error) {
-	if !strings.HasPrefix(name, "user.") {
-		return "", os.ErrPermission
-	}
-	short := strings.TrimPrefix(name, "user.")
-	if short == "" {
+// xattrMetaKey is the S3 user-metadata map key for a given xattr name.
+// Example: "checksum" -> "Xattr-checksum". Wire names per RFC 8276 are
+// naked (no namespace prefix) so we reject anything that carries one
+// — a misbehaving caller could otherwise collide with the reserved
+// Uid / Gid / Mode / SymlinkTarget slots.
+func xattrMetaKey(name string) (string, error) {
+	if name == "" {
 		return "", os.ErrInvalid
 	}
-	return short, nil
-}
-
-// xattrMetaKey is the S3 user-metadata map key for a given xattr name.
-// Example: "user.checksum" -> "Xattr-checksum".
-func xattrMetaKey(name string) (string, error) {
-	short, err := stripUserPrefix(name)
-	if err != nil {
-		return "", err
+	for _, bad := range []string{"user.", "trusted.", "security.", "system."} {
+		if strings.HasPrefix(name, bad) {
+			return "", os.ErrInvalid
+		}
 	}
-	return xattrMetaPrefix + short, nil
-}
-
-// addUserPrefix is the inverse of stripUserPrefix.
-func addUserPrefix(shortName string) string {
-	return "user." + shortName
+	return xattrMetaPrefix + name, nil
 }
 
 // readObjectMeta resolves a POSIX path to an S3 object and returns a
@@ -159,9 +146,9 @@ func (fs *S3FS) SetXattr(path, name string, value []byte, option uint32) error {
 	return nil
 }
 
-// ListXattrs returns fully-qualified xattr names (e.g.
-// "user.checksum") for the object at path. We only expose user.*
-// names; other S3 user-metadata keys are filtered out.
+// ListXattrs returns naked xattr names (no namespace prefix) for the
+// object at path, which is what the NFSv4.2 wire format expects. The
+// Linux kernel prepends "user." on its end.
 func (fs *S3FS) ListXattrs(path string) ([]string, error) {
 	_, meta, err := fs.readObjectMeta(context.Background(), path)
 	if err != nil {
@@ -170,7 +157,7 @@ func (fs *S3FS) ListXattrs(path string) ([]string, error) {
 	out := []string{}
 	for k := range meta {
 		if short, ok := shortFromMetaKey(k); ok {
-			out = append(out, addUserPrefix(short))
+			out = append(out, short)
 		}
 	}
 	return out, nil
