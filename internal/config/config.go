@@ -17,6 +17,7 @@ type Config struct {
 	Health HealthConfig
 	Cache  CacheConfig
 	Log    LogConfig
+	TLS    TLSConfig
 }
 
 // S3Config holds S3 backend configuration.
@@ -53,6 +54,21 @@ type LogConfig struct {
 	Level string
 }
 
+// TLSConfig holds in-band TLS (RFC 9289) configuration for the NFS
+// server. When Enable is true the server advertises AUTH_TLS in
+// response to the kernel's STARTTLS probe and upgrades the connection
+// in place. CertFile / KeyFile point to a PEM-encoded server cert and
+// key. ClientCAFile, if set, enables mutual TLS — clients must
+// present a cert signed by one of the CAs in the file. MinVersion
+// accepts "1.2" or "1.3" (default 1.3).
+type TLSConfig struct {
+	Enable       bool
+	CertFile     string
+	KeyFile      string
+	ClientCAFile string
+	MinVersion   string
+}
+
 // Load reads configuration from the given YAML file path,
 // with environment variable overrides.
 func Load(path string) (*Config, error) {
@@ -81,6 +97,10 @@ func Load(path string) (*Config, error) {
 		},
 		Log: LogConfig{
 			Level: "info",
+		},
+		TLS: TLSConfig{
+			Enable:     false,
+			MinVersion: "1.3",
 		},
 	}
 
@@ -144,6 +164,31 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("invalid CACHE_METADATA_TTL: %w", err)
 		}
 		cfg.Cache.MetadataTTL = d
+	}
+	if v := os.Getenv("NFS_TLS_ENABLE"); v != "" {
+		cfg.TLS.Enable = v == "true" || v == "1"
+	}
+	if v := os.Getenv("NFS_TLS_CERT_FILE"); v != "" {
+		cfg.TLS.CertFile = v
+	}
+	if v := os.Getenv("NFS_TLS_KEY_FILE"); v != "" {
+		cfg.TLS.KeyFile = v
+	}
+	if v := os.Getenv("NFS_TLS_CLIENT_CA_FILE"); v != "" {
+		cfg.TLS.ClientCAFile = v
+	}
+	if v := os.Getenv("NFS_TLS_MIN_VERSION"); v != "" {
+		cfg.TLS.MinVersion = v
+	}
+	if cfg.TLS.Enable {
+		if cfg.TLS.CertFile == "" || cfg.TLS.KeyFile == "" {
+			return nil, fmt.Errorf("NFS_TLS_ENABLE=true requires NFS_TLS_CERT_FILE and NFS_TLS_KEY_FILE")
+		}
+		switch cfg.TLS.MinVersion {
+		case "", "1.2", "1.3":
+		default:
+			return nil, fmt.Errorf("invalid NFS_TLS_MIN_VERSION %q (want \"1.2\" or \"1.3\")", cfg.TLS.MinVersion)
+		}
 	}
 
 	// Validate required credentials

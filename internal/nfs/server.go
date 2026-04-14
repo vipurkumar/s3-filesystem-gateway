@@ -4,6 +4,7 @@
 package nfs
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 
@@ -43,6 +44,10 @@ type ServerConfig struct {
 	Handles      *s3fs.HandleStore
 	DataCacheDir string
 	DataCacheMax int64
+	// TLS, if non-nil, enables RFC 9289 in-band STARTTLS on the same
+	// port as plaintext NFS. Clients opt in with `mount -o xprtsec=tls`
+	// (Linux 6.5+); clients that don't ask continue to get plaintext.
+	TLS *tls.Config
 }
 
 // NewServer creates a new NFSv4 server backed by S3.
@@ -76,7 +81,14 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	backend := nfsbackend.New(vfsLoader, acceptAuth)
 
 	addr := fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.Port)
-	srv, err := nfsserver.NewServerTCP(addr, backend)
+	var serverOpts []nfsserver.Option
+	if cfg.TLS != nil {
+		serverOpts = append(serverOpts, nfsserver.WithTLSConfig(cfg.TLS))
+		slog.Info("NFS in-band TLS enabled (RFC 9289)",
+			"min_version", cfg.TLS.MinVersion,
+			"client_auth", cfg.TLS.ClientAuth)
+	}
+	srv, err := nfsserver.NewServerTCP(addr, backend, serverOpts...)
 	if err != nil {
 		if dc != nil {
 			dc.Stop()

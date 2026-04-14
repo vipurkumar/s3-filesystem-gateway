@@ -112,7 +112,16 @@ func main() {
 	defer func() { _ = handles.Close() }()
 	slog.Info("handle store opened", "path", dbPath)
 
-	// 4. Start NFSv4 server
+	// 4. Build optional in-band TLS config (RFC 9289) before creating
+	// the NFS server. A nil tlsCfg means plaintext-only, matching the
+	// pre-Stream-C behaviour.
+	tlsCfg, err := cfg.TLS.BuildTLSConfig()
+	if err != nil {
+		slog.Error("failed to build TLS config", "error", err)
+		os.Exit(1)
+	}
+
+	// 5. Start NFSv4 server
 	nfsSrv, err := nfs.NewServer(nfs.ServerConfig{
 		Port:         cfg.NFS.Port,
 		BindAddr:     cfg.NFS.BindAddr,
@@ -120,6 +129,7 @@ func main() {
 		Handles:      handles,
 		DataCacheDir: cfg.Cache.DataDir,
 		DataCacheMax: cfg.Cache.DataMaxSize,
+		TLS:          tlsCfg,
 	})
 	if err != nil {
 		slog.Error("failed to create NFS server", "error", err)
