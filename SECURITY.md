@@ -40,6 +40,9 @@ The gateway implements the following security measures:
 ### TLS for S3 Connections
 TLS is enabled by default for all connections to S3-compatible backends. Disabling TLS requires explicit configuration and is not recommended for production use.
 
+### NFS Transport TLS (RFC 9289, in-band STARTTLS)
+The gateway implements [RFC 9289 RPC-with-TLS](https://datatracker.ietf.org/doc/html/rfc9289) on the NFSv4.2 transport. When `NFS_TLS_ENABLE=true` (with `NFS_TLS_CERT_FILE` / `NFS_TLS_KEY_FILE` pointing at a PEM-encoded server cert and key), the same TCP port speaks both plaintext NFS and TLS-wrapped NFS — Linux 6.5+ clients opt in with `mount -o xprtsec=tls,vers=4.2 ...`, plaintext clients continue unchanged. Defaults to TLS 1.3; set `NFS_TLS_MIN_VERSION=1.2` for legacy clients. Pointing `NFS_TLS_CLIENT_CA_FILE` at a CA bundle additionally requires the kernel to present a client certificate signed by one of those CAs (mutual TLS). All four ops in the v4.1 session-establishment dance run inside the encrypted tunnel after the AUTH_TLS upgrade, so client identifiers, file handles, and contents are protected end-to-end on the NFS link.
+
 ### Path Traversal Protection
 All file paths are validated and sanitized to prevent directory traversal attacks (e.g., `../` sequences). Paths are resolved within the virtual filesystem root before being mapped to S3 keys.
 
@@ -60,11 +63,11 @@ The virtual inode allocator includes overflow detection to prevent inode number 
 
 ## Known Limitations
 
-### NFS Traffic Is Unencrypted
-> NFS traffic between clients and the gateway is transmitted in plaintext in v0.1.0. **Native RFC 9289 RPC-with-TLS is planned for v0.3.0**, coupled with NFSv4.1/4.2 session support. Until then, deploy the gateway on a trusted network segment, or terminate TLS out-of-band via a Wireguard mesh / stunnel tunnel.
+### NFS Traffic Encryption Is Opt-In
+> Plaintext is still the default for backwards compatibility with v0.1.0 deployments and for clients on kernels older than 6.5 that don't support `xprtsec=tls`. To get end-to-end NFS encryption set `NFS_TLS_ENABLE=true` (see "NFS Transport TLS" above and `deployments/docker/docker-compose.quickstart.tls.yml`) and mount with `-o xprtsec=tls,vers=4.2` from a Linux 6.5+ client with `ktls-utils` installed. Without TLS, deploy on a trusted network segment or wrap the link in a Wireguard mesh.
 
-### No NFS Client Authentication
-> The gateway uses AUTH_SYS (traditional UNIX UID/GID) for NFS authentication, which provides no cryptographic verification of client identity. When RFC 9289 TLS lands in v0.3.0, mutual-TLS with client certificates will be the recommended way to authenticate clients cryptographically. Kerberos (RPCSEC_GSS) is parked indefinitely -- TLS covers the same threat model with much less operational burden.
+### NFS Client Authentication: AUTH_SYS by Default, mTLS Available
+> The gateway uses AUTH_SYS (traditional UNIX UID/GID) for NFS authentication, which provides no cryptographic verification of client identity on its own. Pair `NFS_TLS_ENABLE=true` with `NFS_TLS_CLIENT_CA_FILE=...` to require clients to present an X.509 cert signed by your CA — the kernel's `xprtsec=mtls` mount option drives this. Kerberos (RPCSEC_GSS) is parked indefinitely; in-band TLS + mTLS covers the same threat model with much less operational burden.
 
 ### Rename Is Not Atomic
 Rename operations are implemented as copy-then-delete on S3, which is not atomic. A failure during rename may result in the object existing at both the old and new keys. This is an inherent limitation of S3's object storage model.

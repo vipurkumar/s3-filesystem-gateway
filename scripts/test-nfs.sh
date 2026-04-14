@@ -102,7 +102,11 @@ test_upload_to_s3() {
 
 test_mount_nfs() {
     mkdir -p "${MOUNT_POINT}"
-    mount -t nfs4 "${GATEWAY_HOST}:/" "${MOUNT_POINT}"
+    if [[ -n "${MOUNT_OPTS:-}" ]]; then
+        mount -t nfs4 -o "${MOUNT_OPTS}" "${GATEWAY_HOST}:/" "${MOUNT_POINT}"
+    else
+        mount -t nfs4 "${GATEWAY_HOST}:/" "${MOUNT_POINT}"
+    fi
     mountpoint -q "${MOUNT_POINT}"
 }
 

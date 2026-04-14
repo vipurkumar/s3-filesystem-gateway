@@ -1,0 +1,125 @@
+# Integration test rig with NFS in-band TLS enabled (RFC 9289).
+#
+# Run from the repo root:
+#   docker compose -f deployments/docker/docker-compose.test.tls.yml up \
+#     --abort-on-container-exit --build --exit-code-from testrunner
+#
+# What it does:
+#   1. minio + minio-init: same as the plaintext test rig.
+#   2. cert-init: generates a self-signed P-256 ECDSA cert into a
+#      shared volume on first run.
+#   3. gateway: builds from source with NFS_TLS_ENABLE=true and the
+#      cert path wired in.
+#   4. testrunner: privileged Ubuntu container that installs
+#      nfs-common + ktls-utils, copies the cert into its own trust
+#      store, starts tlshd, and runs scripts/test-nfs.sh against the
+#      gateway with `xprtsec=tls`. Also captures a tcpdump snapshot
+#      to assert the wire is actually TLS records.
+
+services:
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb --ignore-existing local/data;
+      echo 'test-file-content' | mc pipe local/data/hello.txt;
+      echo 'MinIO initialized with test data';
+      "
+
+  cert-init:
+    image: alpine/openssl:latest
+    volumes:
+      - tls-certs:/certs
+    entrypoint: >
+      sh -c "
+      if [ ! -f /certs/server.crt ]; then
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256
+          -nodes -days 1
+          -keyout /certs/server.key
+          -out /certs/server.crt
+          -subj '/CN=gateway'
+          -addext 'subjectAltName=DNS:gateway,DNS:localhost,IP:127.0.0.1';
+        chmod 0644 /certs/server.crt;
+        chmod 0600 /certs/server.key;
+        echo 'cert-init: generated test cert';
+      else
+        echo 'cert-init: reusing existing cert';
+      fi
+      "
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+      cert-init:
+        condition: service_completed_successfully
+    environment:
+      S3_ENDPOINT: minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: data
+      S3_USE_SSL: "false"
+      NFS_PORT: "2049"
+      LOG_LEVEL: debug
+      NFS_TLS_ENABLE: "true"
+      NFS_TLS_CERT_FILE: /certs/server.crt
+      NFS_TLS_KEY_FILE: /certs/server.key
+      NFS_TLS_MIN_VERSION: "1.3"
+    volumes:
+      - tls-certs:/certs:ro
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z localhost 2049 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  testrunner:
+    image: ubuntu:24.04
+    privileged: true
+    depends_on:
+      gateway:
+        condition: service_healthy
+    environment:
+      GATEWAY_HOST: gateway
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: data
+      MOUNT_OPTS: "vers=4.2,xprtsec=tls,nolock,soft,timeo=50,retry=0"
+    volumes:
+      - ../../scripts/test-nfs.sh:/opt/test-nfs.sh:ro
+      - tls-certs:/certs:ro
+    entrypoint: >
+      /bin/bash -c "
+      set -e;
+      apt-get update -qq;
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nfs-common curl ktls-utils tcpdump > /dev/null 2>&1;
+      cp /certs/server.crt /usr/local/share/ca-certificates/sbst.crt;
+      update-ca-certificates > /dev/null 2>&1;
+      tlshd > /var/log/tlshd.log 2>&1 &
+      sleep 1;
+      chmod +x /opt/test-nfs.sh;
+      /opt/test-nfs.sh
+      "
+
+volumes:
+  tls-certs:

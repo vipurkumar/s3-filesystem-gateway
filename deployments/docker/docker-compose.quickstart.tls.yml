@@ -1,0 +1,110 @@
+# Quickstart with RFC 9289 in-band TLS enabled.
+#
+# Brings up MinIO + the gateway with a self-signed TLS cert generated
+# at first run by a tiny init container. Mount with:
+#
+#   sudo mount -t nfs -o vers=4.2,xprtsec=tls localhost:/ /mnt/s3
+#
+# Linux 6.5+ is required and you must have ktls-utils installed
+# (`apt install ktls-utils && systemctl enable --now tlshd`) so the
+# kernel can complete the TLS handshake. The self-signed cert at
+# `tls-certs:/cert.pem` is what the kernel needs to trust — copy it
+# into your system trust store with `update-ca-certificates`.
+#
+# To swap in a real cert, mount your own files into /certs as
+# /certs/server.crt and /certs/server.key and remove the cert-init
+# service.
+
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/s3nfsgw
+      "
+
+  cert-init:
+    image: alpine/openssl:latest
+    volumes:
+      - tls-certs:/certs
+    # Generate a self-signed P-256 ECDSA cert valid for 30 days the
+    # first time the volume is empty. Subsequent runs are no-ops, so
+    # tearing the stack down with `docker compose down` (no -v) keeps
+    # the same cert across restarts.
+    entrypoint: >
+      sh -c "
+      if [ ! -f /certs/server.crt ]; then
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256
+          -nodes -days 30
+          -keyout /certs/server.key
+          -out /certs/server.crt
+          -subj '/CN=localhost'
+          -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1';
+        chmod 0644 /certs/server.crt;
+        chmod 0600 /certs/server.key;
+        echo 'cert-init: generated self-signed cert at /certs/server.crt';
+      else
+        echo 'cert-init: reusing existing cert at /certs/server.crt';
+      fi
+      "
+
+  gateway:
+    image: ghcr.io/rupivbluegreen/s3-filesystem-gateway:latest
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+      cert-init:
+        condition: service_completed_successfully
+    environment:
+      S3_ENDPOINT: minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: s3nfsgw
+      S3_REGION: us-east-1
+      S3_USE_SSL: "false"
+      S3_PATH_STYLE: "true"
+      NFS_PORT: "2049"
+      HEALTH_PORT: "9090"
+      LOG_LEVEL: info
+      # RFC 9289 in-band TLS — opt-in; clients use `xprtsec=tls`.
+      NFS_TLS_ENABLE: "true"
+      NFS_TLS_CERT_FILE: /certs/server.crt
+      NFS_TLS_KEY_FILE: /certs/server.key
+      NFS_TLS_MIN_VERSION: "1.3"
+    ports:
+      - "2049:2049"
+      - "9090:9090"
+    volumes:
+      - gateway-data:/var/lib/s3nfsgw
+      - tls-certs:/certs:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  minio-data:
+  gateway-data:
+  tls-certs:

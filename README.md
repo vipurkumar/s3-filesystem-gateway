@@ -55,10 +55,9 @@ No clone required — download a single compose file that pulls the gateway imag
 curl -O https://raw.githubusercontent.com/rupivbluegreen/s3-filesystem-gateway/main/deployments/docker/docker-compose.quickstart.yml
 docker compose -f docker-compose.quickstart.yml up -d
 
-# Mount from another terminal (Linux). vers=4.0 is required — libnfs-go
-# does not implement NFSv4.1 session setup (EXCHANGE_ID/CREATE_SESSION),
-# so modern Linux kernels must be told to use v4.0 explicitly.
-sudo mount -t nfs4 -o vers=4.0,port=2049,nolock localhost:/ /mnt/s3
+# Mount from another terminal (Linux). The kernel default (v4.2)
+# works since v0.3.0; v4.1 and v4.0 also work for older clients.
+sudo mount -t nfs4 -o port=2049,nolock localhost:/ /mnt/s3
 
 # Use it
 ls /mnt/s3
@@ -69,6 +68,49 @@ mkdir /mnt/s3/subdir
 # MinIO console at http://localhost:9001 (minioadmin / minioadmin)
 # Gateway health at http://localhost:9090/health
 ```
+
+### Encrypted NFS (RFC 9289 in-band TLS)
+
+Since v0.3.0 the gateway supports [RFC 9289 RPC-with-TLS](https://datatracker.ietf.org/doc/html/rfc9289) — encrypted NFSv4.2 traffic on the same port as plaintext, with no stunnel or VPN required. The Linux kernel client opts in per-mount with `xprtsec=tls`; existing plaintext mounts keep working unchanged.
+
+**Server side** (one extra compose file, generates a self-signed cert on first run):
+
+```bash
+curl -O https://raw.githubusercontent.com/rupivbluegreen/s3-filesystem-gateway/main/deployments/docker/docker-compose.quickstart.tls.yml
+docker compose -f docker-compose.quickstart.tls.yml up -d
+```
+
+**Client side** (Linux 6.5+, requires `ktls-utils` for the kernel TLS handshake daemon):
+
+```bash
+# One-time host setup
+sudo apt install -y ktls-utils nfs-common
+sudo systemctl enable --now tlshd
+
+# Trust the gateway's self-signed cert (only needed for the quickstart;
+# real deployments use a CA-signed cert)
+docker compose -f docker-compose.quickstart.tls.yml cp gateway:/certs/server.crt /tmp/sbst.crt
+sudo cp /tmp/sbst.crt /usr/local/share/ca-certificates/sbst.crt
+sudo update-ca-certificates
+
+# Mount with TLS
+sudo mount -t nfs4 -o vers=4.2,xprtsec=tls,port=2049 localhost:/ /mnt/s3
+
+# Verify the wire is encrypted (no NFS RPCs visible in tcpdump)
+sudo tcpdump -i lo -nn port 2049 -c 4 -X
+```
+
+Configurable env vars on the gateway:
+
+| Env Variable | Default | Description |
+|---|---|---|
+| `NFS_TLS_ENABLE` | `false` | Set to `true` to advertise AUTH_TLS to clients. |
+| `NFS_TLS_CERT_FILE` | (unset) | PEM-encoded server certificate. Required when enabled. |
+| `NFS_TLS_KEY_FILE` | (unset) | PEM-encoded private key. Required when enabled. |
+| `NFS_TLS_CLIENT_CA_FILE` | (unset) | If set, requires clients to present a cert signed by one of these CAs (mTLS). |
+| `NFS_TLS_MIN_VERSION` | `1.3` | Minimum TLS version. Set to `1.2` for legacy clients. |
+
+Plaintext clients continue to work against a TLS-enabled gateway — the AUTH_TLS NULL probe is only sent when the kernel mounts with `xprtsec=tls`. Operators can run a single port serving both populations during migration.
 
 ### Published images
 
@@ -109,6 +151,11 @@ Configuration uses defaults with environment variable overrides:
 | `CACHE_DATA_DIR` | `/var/cache/s3gw` | Data cache directory |
 | `CACHE_DATA_MAX_SIZE` | `10GB` | Data cache max size |
 | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
+| `NFS_TLS_ENABLE` | `false` | Enable RFC 9289 in-band TLS on the NFS port |
+| `NFS_TLS_CERT_FILE` | (unset) | Path to PEM-encoded server certificate |
+| `NFS_TLS_KEY_FILE` | (unset) | Path to PEM-encoded private key |
+| `NFS_TLS_CLIENT_CA_FILE` | (unset) | CA bundle for mutual TLS (clients must present a cert) |
+| `NFS_TLS_MIN_VERSION` | `1.3` | Minimum TLS version (`1.2` or `1.3`) |
 
 CLI flags:
 
