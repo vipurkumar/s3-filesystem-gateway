@@ -28,7 +28,7 @@ jobs:
       - name: go test
         run: go test ./... -race -coverprofile=coverage.out -covermode=atomic -timeout 5m
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v6
         with:
           files: ./coverage.out
           fail_ci_if_error: false
