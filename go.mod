@@ -3,7 +3,7 @@ module github.com/vipurkumar/s3-filesystem-gateway
 go 1.25
 
 require (
-	github.com/minio/minio-go/v7 v7.0.100
+	github.com/minio/minio-go/v7 v7.1.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/smallfz/libnfs-go v0.0.7
 	go.etcd.io/bbolt v1.4.3
@@ -29,6 +29,7 @@ require (
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/tinylib/msgp v1.6.1 // indirect
+	github.com/zeebo/xxh3 v1.1.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.46.0 // indirect
